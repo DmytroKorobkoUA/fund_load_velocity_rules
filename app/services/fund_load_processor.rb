@@ -64,7 +64,7 @@ class FundLoadProcessor
 
     # Daily amount limit check
     daily_total = customer_loads.where(time: day.all_day).sum(:load_amount)
-    accepted = false if (daily_total + amount) > DAILY_LIMIT
+    accepted = false if (daily_total + effective_amount) > DAILY_LIMIT
 
     # Daily load count limit check
     daily_count = customer_loads.where(time: day.all_day).count
@@ -73,7 +73,7 @@ class FundLoadProcessor
     # Weekly amount limit check
     week_start = day - day.wday
     weekly_total = customer_loads.where(time: week_start.beginning_of_day..(week_start + 6).end_of_day).sum(:load_amount)
-    accepted = false if (weekly_total + amount) > WEEKLY_LIMIT
+    accepted = false if (weekly_total + effective_amount) > WEEKLY_LIMIT
 
     # Persist result
     FundLoadRequest.create!(
