@@ -4,13 +4,19 @@ require 'rails_helper'
 
 RSpec.describe FundLoadProcessor do
   describe '.prime?' do
-    it 'returns true for prime numbers' do
+    it 'returns true for prime numbers (2)' do
       expect(described_class.prime?(2)).to be true
+    end
+
+    it 'returns true for prime numbers (13)' do
       expect(described_class.prime?(13)).to be true
     end
 
-    it 'returns false for non-primes' do
+    it 'returns false for non-primes (4)' do
       expect(described_class.prime?(4)).to be false
+    end
+
+    it 'returns false for non-primes (1)' do
       expect(described_class.prime?(1)).to be false
     end
   end
@@ -44,46 +50,19 @@ RSpec.describe FundLoadProcessor do
     end
 
     it 'rejects if daily amount limit exceeded' do
-      2.times do |i|
-        FundLoadRequest.create!(
-          load_id: 100 + i,
-          customer_id: customer_id,
-          load_amount: 3000.0,
-          time: base_time,
-          accepted: true
-        )
-      end
-
+      create_loads(2, 3000.0)
       result = process(entry('load_amount' => '$200.00'))
       expect(result[:accepted]).to be false
     end
 
     it 'rejects if weekly amount limit exceeded' do
-      3.times do |i|
-        FundLoadRequest.create!(
-          load_id: 100 + i,
-          customer_id: customer_id,
-          load_amount: 7000.0,
-          time: base_time - i.days,
-          accepted: true
-        )
-      end
-
+      create_loads(3, 7000.0)
       result = process(entry('load_amount' => '$500.00'))
       expect(result[:accepted]).to be false
     end
 
     it 'rejects if daily load count exceeded' do
-      3.times do |i|
-        FundLoadRequest.create!(
-          load_id: 100 + i,
-          customer_id: customer_id,
-          load_amount: 100.0,
-          time: base_time,
-          accepted: true
-        )
-      end
-
+      create_loads(3, 100.0)
       result = process(entry('load_amount' => '$50.00'))
       expect(result[:accepted]).to be false
     end
@@ -102,28 +81,38 @@ RSpec.describe FundLoadProcessor do
       expect(result[:accepted]).to be false
     end
 
-    it 'doubles amount on Monday for limit checks' do
-      monday_time = Time.parse('2024-05-13T10:00:00Z') # Monday
+    context 'when load is on Monday' do
+      let(:monday_tm) { Time.parse('2024-05-13T10:00:00Z') } # Monday
+
+      before do
+        FundLoadRequest.create!(
+          load_id: 999,
+          customer_id: customer_id,
+          load_amount: 4000.0,
+          time: monday_tm,
+          accepted: true
+        )
+      end
+
+      it 'rejects load that would exceed daily limit with doubled amount' do
+        result = described_class.process_entry(
+          { 'id' => '11', 'customer_id' => customer_id.to_s, 'load_amount' => '$600.00', 'time' => monday_tm.iso8601 },
+          Hash.new { |h, k| h[k] = [] }
+        )
+        expect(result[:accepted]).to be false
+      end
+    end
+  end
+
+  def create_loads(count, amount)
+    count.times do |i|
       FundLoadRequest.create!(
-        load_id: 999,
+        load_id: 100 + i,
         customer_id: customer_id,
-        load_amount: 4000.0,
-        time: monday_time,
+        load_amount: amount,
+        time: base_time,
         accepted: true
       )
-
-      result = described_class.process_entry(
-        {
-          'id' => '11',
-          'customer_id' => customer_id.to_s,
-          'load_amount' => '$600.00',
-          'time' => monday_time.iso8601
-        },
-        Hash.new { |h, k| h[k] = [] }
-      )
-
-      # 600 * 2 = 1200 → 4000 + 1200 = 5200 → exceeds limit
-      expect(result[:accepted]).to be false
     end
   end
 end

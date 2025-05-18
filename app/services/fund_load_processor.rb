@@ -27,7 +27,7 @@ class FundLoadProcessor
     loads.each do |entry|
       result = process_entry(entry, prime_tracker)
       results << result
-      puts result.to_json
+      Rails.logger.debug result.to_json
     end
 
     File.open(output_path, 'w') do |file|
@@ -46,36 +46,9 @@ class FundLoadProcessor
     customer_id = entry['customer_id'].to_i
     amount = entry['load_amount'].delete('$').to_f
     time = DateTime.parse(entry['time'])
-    day = time.to_date
-    monday_multiplier = time.wday == 1 ? 2 : 1
-    effective_amount = amount * monday_multiplier
 
-    accepted = true
+    accepted = accepted?(id: id, customer_id: customer_id, amount: amount, time: time, prime_tracker: prime_tracker)
 
-    # Special rule: only one prime ID load per day (across all customers), max $9,999
-    if prime?(id)
-      prime_tracker[day] << id
-      if prime_tracker[day].size > 1 || amount > PRIME_MAX
-        accepted = false
-      end
-    end
-
-    customer_loads = FundLoadRequest.where(customer_id: customer_id)
-
-    # Daily amount limit check
-    daily_total = customer_loads.where(time: day.all_day).sum(:load_amount)
-    accepted = false if (daily_total + effective_amount) > DAILY_LIMIT
-
-    # Daily load count limit check
-    daily_count = customer_loads.where(time: day.all_day).count
-    accepted = false if daily_count >= MAX_LOADS_PER_DAY
-
-    # Weekly amount limit check
-    week_start = day - day.wday
-    weekly_total = customer_loads.where(time: week_start.beginning_of_day..(week_start + 6).end_of_day).sum(:load_amount)
-    accepted = false if (weekly_total + effective_amount) > WEEKLY_LIMIT
-
-    # Persist result
     FundLoadRequest.create!(
       load_id: id,
       customer_id: customer_id,
@@ -91,14 +64,62 @@ class FundLoadProcessor
     }
   end
 
+  # Evaluates whether the entry passes all business rules.
+  #
+  # @param id [Integer] Load ID
+  # @param customer_id [Integer] Customer ID
+  # @param amount [Float] Load amount
+  # @param time [DateTime] Load timestamp
+  # @param prime_tracker [Hash{Date => Array<Integer>}] tracks prime ID loads per day
+  #
+  # @return [Boolean] true if accepted, false otherwise
+  def self.accepted?(id:, customer_id:, amount:, time:, prime_tracker:)
+    day = time.to_date
+    effective_amount = amount * (time.wday == 1 ? 2 : 1)
+
+    return false if prime_violation?(id, amount, day, prime_tracker)
+
+    customer_loads = FundLoadRequest.where(customer_id: customer_id)
+
+    return false if exceeds_daily_limit?(customer_loads, day, effective_amount)
+    return false if exceeds_daily_count?(customer_loads, day)
+    return false if exceeds_weekly_limit?(customer_loads, day, effective_amount)
+
+    true
+  end
+
   # Determines if a given number is prime.
   #
-  # @param n [Integer] the number to check
+  # @param number [Integer] the number to check
   #
   # @return [Boolean] true if prime, false otherwise
-  def self.prime?(n)
-    return false if n <= 1
+  def self.prime?(number)
+    return false if number <= 1
 
-    (2..Math.sqrt(n)).none? { |i| n % i == 0 }
+    (2..Math.sqrt(number)).none? { |i| (number % i).zero? }
+  end
+
+  private_class_method def self.prime_violation?(id, amount, day, prime_tracker)
+    return false unless prime?(id)
+
+    prime_tracker[day] << id
+    prime_tracker[day].size > 1 || amount > PRIME_MAX
+  end
+
+  private_class_method def self.exceeds_daily_limit?(customer_loads, day, amount)
+    daily_total = customer_loads.where(time: day.all_day).sum(:load_amount)
+    (daily_total + amount) > DAILY_LIMIT
+  end
+
+  private_class_method def self.exceeds_daily_count?(customer_loads, day)
+    daily_count = customer_loads.where(time: day.all_day).count
+    daily_count >= MAX_LOADS_PER_DAY
+  end
+
+  private_class_method def self.exceeds_weekly_limit?(customer_loads, day, amount)
+    week_start = day - day.wday
+    range = week_start.beginning_of_day..(week_start + 6).end_of_day
+    weekly_total = customer_loads.where(time: range).sum(:load_amount)
+    (weekly_total + amount) > WEEKLY_LIMIT
   end
 end

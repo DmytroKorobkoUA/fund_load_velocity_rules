@@ -19,7 +19,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_18_153337) do
     t.integer "customer_id"
     t.decimal "load_amount"
     t.datetime "time"
-    t.boolean "accepted"
+    t.boolean "accepted", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
   end
